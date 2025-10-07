@@ -1,149 +1,61 @@
-﻿using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using System.Text.RegularExpressions;
+﻿using System;
+using System.IO;
+using System.Linq;
+using System.Collections.Generic;
 
 class Program
 {
     static void Main()
     {
         string solutionPath = @"/Users/pratikbanawalkar/am-mobile";
-        string constantsPath = Path.Combine(solutionPath, "FormConstants.cs");
+        string constantFilePath = Path.Combine(solutionPath, "FormConstants.cs");
 
-        var files = Directory.GetFiles(solutionPath, "*.cs", SearchOption.AllDirectories);
+        string constantName = "M_ROUTE_FORM";
+        string constantValue = "MInspection";
+        string searchText = "(\"/api/mobile/MInspection";
+        string replaceText = "($\"/api/mobile/{FormConstants." + constantName + "}";
 
-        // Step 1: Collect unique NexgenAMCaption.Get calls where Category == "Inspection"
-        var constants = new Dictionary<string, (string Category, string Key)>();
+        var files = Directory.GetFiles(solutionPath, "*.cs", SearchOption.AllDirectories)
+                             .Where(f => !f.EndsWith("FormConstants.cs"))
+                             .ToList();
+
+        int replaceCount = 0;
 
         foreach (var file in files)
         {
-            var code = File.ReadAllText(file);
-            var tree = CSharpSyntaxTree.ParseText(code);
-            var root = tree.GetRoot();
+            string code = File.ReadAllText(file);
+            if (!code.Contains(searchText)) continue;
 
-            var invocations = root.DescendantNodes().OfType<InvocationExpressionSyntax>();
+            var newCode = code.Replace(searchText, replaceText);
 
-            foreach (var invocation in invocations)
+            if (newCode != code)
             {
-                if (invocation.Expression is MemberAccessExpressionSyntax member &&
-                    member.Name.ToString() == "Get" &&
-                    member.Expression.ToString() == "NexgenAMCaption")
-                {
-                    var args = invocation.ArgumentList.Arguments;
-                    if (args.Count >= 2)
-                    {
-                        var firstArg = args[0].Expression as LiteralExpressionSyntax;
-                        var secondArg = args[1].Expression as LiteralExpressionSyntax;
-
-                        if (firstArg != null && firstArg.Token.ValueText == "Inspection" && secondArg != null)
-                        {
-                            string key = secondArg.Token.ValueText;
-                            if (!constants.ContainsKey(key))
-                                constants[key] = ("Inspection", key);
-                        }
-                    }
-                }
+                File.WriteAllText(file, newCode);
+                Console.WriteLine($"✅ Updated: {file}");
+                replaceCount++;
             }
         }
 
-        // Step 2: Generate FormConstants.cs for Inspection keys
-        using (var writer = new StreamWriter(constantsPath, false))
+        // --- Ensure FormConstants.cs exists ---
+        if (!File.Exists(constantFilePath))
         {
-            writer.WriteLine("public static class FormConstants");
-            writer.WriteLine("{");
-
-            foreach (var kvp in constants)
-            {
-                string key = kvp.Key;
-                string category = kvp.Value.Category;
-                string propName = MakePropertyName(key);
-                writer.WriteLine($"\tpublic static string {propName} => NexgenAMCaption.Get(\"{category}\", \"{key}\");");
-            }
-
-            writer.WriteLine("}");
+            File.WriteAllText(constantFilePath, "public static class FormConstants\n{\n}\n");
         }
 
-        Console.WriteLine($"FormConstants.cs generated with {constants.Count} Inspection properties at {constantsPath}");
-
-        // Step 3: Replace references in code files for Inspection keys
-        foreach (var file in files)
+        // --- Add constant if missing ---
+        string formConstantsCode = File.ReadAllText(constantFilePath);
+        if (!formConstantsCode.Contains($"const string {constantName}"))
         {
-            var code = File.ReadAllText(file);
-            var tree = CSharpSyntaxTree.ParseText(code);
-            var root = tree.GetRoot();
-
-            var rewriter = new NexgenRewriter(constants);
-            var newRoot = rewriter.Visit(root);
-
-            if (newRoot != root)
+            int insertIndex = formConstantsCode.LastIndexOf('}');
+            if (insertIndex > 0)
             {
-                File.WriteAllText(file, newRoot.ToFullString());
-                Console.WriteLine($"Updated Inspection references in {file}");
+                string newConstLine = $"    public const string {constantName} = \"{constantValue}\";\n";
+                formConstantsCode = formConstantsCode.Insert(insertIndex, newConstLine);
+                File.WriteAllText(constantFilePath, formConstantsCode);
+                Console.WriteLine($"🆕 Added constant to FormConstants.cs: {constantName} = \"{constantValue}\"");
             }
         }
 
-        Console.WriteLine("All Inspection references replaced with FormConstants properties!");
-    }
-
-    // Convert key to valid property name
-    // Convert key to valid property name in UPPERCASE with underscores
-    static string MakePropertyName(string key)
-    {
-        // 1. Add underscore before capital letters that follow lowercase letters (camelCase → UPPER_WITH_UNDERSCORES)
-        string name = Regex.Replace(key, "([a-z0-9])([A-Z])", "$1_$2");
-
-        // 2. Replace any spaces with underscores
-        name = name.Replace(" ", "_");
-
-        // 3. Remove any remaining invalid characters (keep only A-Z, 0-9, _)
-        name = Regex.Replace(name, @"[^A-Za-z0-9_]", "_");
-
-        // 4. Convert to uppercase
-        name = name.ToUpper();
-
-        // 5. Prefix with underscore if starts with a digit
-        if (char.IsDigit(name[0]))
-            name = "_" + name;
-
-        return name;
-    }
-
-
-    class NexgenRewriter : CSharpSyntaxRewriter
-    {
-        private readonly Dictionary<string, (string Category, string Key)> _constants;
-
-        public NexgenRewriter(Dictionary<string, (string Category, string Key)> constants)
-        {
-            _constants = constants;
-        }
-
-        public override SyntaxNode VisitInvocationExpression(InvocationExpressionSyntax node)
-        {
-            if (node.Expression is MemberAccessExpressionSyntax member &&
-                member.Name.ToString() == "Get" &&
-                member.Expression.ToString() == "NexgenAMCaption")
-            {
-                var args = node.ArgumentList.Arguments;
-                if (args.Count >= 2)
-                {
-                    var firstArg = args[0].Expression as LiteralExpressionSyntax;
-                    var secondArg = args[1].Expression as LiteralExpressionSyntax;
-
-                    if (firstArg != null && firstArg.Token.ValueText == "Inspection" && secondArg != null)
-                    {
-                        string key = secondArg.Token.ValueText;
-                        if (_constants.ContainsKey(key))
-                        {
-                            string propName = MakePropertyName(key);
-                            var replacement = SyntaxFactory.ParseExpression($"FormConstants.{propName}");
-                            return replacement.WithTriviaFrom(node);
-                        }
-                    }
-                }
-            }
-
-            return base.VisitInvocationExpression(node);
-        }
+        Console.WriteLine($"\n🎯 Replacement complete. Updated {replaceCount} files.");
     }
 }
