@@ -1,24 +1,19 @@
-﻿using System;
-using System.IO;
-using System.Linq;
-using System.Collections.Generic;
-using Microsoft.CodeAnalysis;
+﻿using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using OfficeOpenXml;
+using System.Text.RegularExpressions;
 
 class Program
 {
     static void Main()
     {
         string solutionPath = @"/Users/pratikbanawalkar/am-mobile";
-        string excelPath = @"/Users/pratikbanawalkar/am-mobile/InspectionCaptions.xlsx";
+        string constantsPath = Path.Combine(solutionPath, "FormConstants.cs");
 
         var files = Directory.GetFiles(solutionPath, "*.cs", SearchOption.AllDirectories);
 
-        // Use HashSet to ignore duplicates based on Key
-        var seenKeys = new HashSet<string>();
-        var results = new List<(string Category, string Key, string File, int Line)>();
+        // Step 1: Collect unique NexgenAMCaption.Get calls where Category == "Inspection"
+        var constants = new Dictionary<string, (string Category, string Key)>();
 
         foreach (var file in files)
         {
@@ -26,8 +21,7 @@ class Program
             var tree = CSharpSyntaxTree.ParseText(code);
             var root = tree.GetRoot();
 
-            var invocations = root.DescendantNodes()
-                                  .OfType<InvocationExpressionSyntax>();
+            var invocations = root.DescendantNodes().OfType<InvocationExpressionSyntax>();
 
             foreach (var invocation in invocations)
             {
@@ -41,46 +35,115 @@ class Program
                         var firstArg = args[0].Expression as LiteralExpressionSyntax;
                         var secondArg = args[1].Expression as LiteralExpressionSyntax;
 
-                        if (firstArg != null && firstArg.Token.ValueText == "Inspection")
+                        if (firstArg != null && firstArg.Token.ValueText == "Inspection" && secondArg != null)
                         {
-                            string key = secondArg?.Token.ValueText ?? "(non-literal)";
-
-                            // Skip if key is already added
-                            if (!seenKeys.Contains(key))
-                            {
-                                seenKeys.Add(key);
-                                var lineSpan = invocation.GetLocation().GetLineSpan();
-                                results.Add((firstArg.Token.ValueText, key, file, lineSpan.StartLinePosition.Line + 1));
-                            }
+                            string key = secondArg.Token.ValueText;
+                            if (!constants.ContainsKey(key))
+                                constants[key] = ("Inspection", key);
                         }
                     }
                 }
             }
         }
 
-        // --- EPPlus 8 License setup ---
-        ExcelPackage.License.SetNonCommercialPersonal("Pratik Banawalkar");
-
-        var excelFile = new FileInfo(excelPath);
-        using var package = new ExcelPackage(excelFile);
-        var ws = package.Workbook.Worksheets.Add("InspectionCaptions");
-
-        // Header
-        ws.Cells[1, 1].Value = "Category";
-        ws.Cells[1, 2].Value = "Key";
-        ws.Cells[1, 3].Value = "File";
-        ws.Cells[1, 4].Value = "Line";
-
-        // Data
-        for (int i = 0; i < results.Count; i++)
+        // Step 2: Generate FormConstants.cs for Inspection keys
+        using (var writer = new StreamWriter(constantsPath, false))
         {
-            ws.Cells[i + 2, 1].Value = results[i].Category;
-            ws.Cells[i + 2, 2].Value = results[i].Key;
-            ws.Cells[i + 2, 3].Value = results[i].File;
-            ws.Cells[i + 2, 4].Value = results[i].Line;
+            writer.WriteLine("public static class FormConstants");
+            writer.WriteLine("{");
+
+            foreach (var kvp in constants)
+            {
+                string key = kvp.Key;
+                string category = kvp.Value.Category;
+                string propName = MakePropertyName(key);
+                writer.WriteLine($"\tpublic static string {propName} => NexgenAMCaption.Get(\"{category}\", \"{key}\");");
+            }
+
+            writer.WriteLine("}");
         }
 
-        package.Save();
-        Console.WriteLine($"Excel exported successfully to {excelPath}");
+        Console.WriteLine($"FormConstants.cs generated with {constants.Count} Inspection properties at {constantsPath}");
+
+        // Step 3: Replace references in code files for Inspection keys
+        foreach (var file in files)
+        {
+            var code = File.ReadAllText(file);
+            var tree = CSharpSyntaxTree.ParseText(code);
+            var root = tree.GetRoot();
+
+            var rewriter = new NexgenRewriter(constants);
+            var newRoot = rewriter.Visit(root);
+
+            if (newRoot != root)
+            {
+                File.WriteAllText(file, newRoot.ToFullString());
+                Console.WriteLine($"Updated Inspection references in {file}");
+            }
+        }
+
+        Console.WriteLine("All Inspection references replaced with FormConstants properties!");
+    }
+
+    // Convert key to valid property name
+    // Convert key to valid property name in UPPERCASE with underscores
+    static string MakePropertyName(string key)
+    {
+        // 1. Add underscore before capital letters that follow lowercase letters (camelCase → UPPER_WITH_UNDERSCORES)
+        string name = Regex.Replace(key, "([a-z0-9])([A-Z])", "$1_$2");
+
+        // 2. Replace any spaces with underscores
+        name = name.Replace(" ", "_");
+
+        // 3. Remove any remaining invalid characters (keep only A-Z, 0-9, _)
+        name = Regex.Replace(name, @"[^A-Za-z0-9_]", "_");
+
+        // 4. Convert to uppercase
+        name = name.ToUpper();
+
+        // 5. Prefix with underscore if starts with a digit
+        if (char.IsDigit(name[0]))
+            name = "_" + name;
+
+        return name;
+    }
+
+
+    class NexgenRewriter : CSharpSyntaxRewriter
+    {
+        private readonly Dictionary<string, (string Category, string Key)> _constants;
+
+        public NexgenRewriter(Dictionary<string, (string Category, string Key)> constants)
+        {
+            _constants = constants;
+        }
+
+        public override SyntaxNode VisitInvocationExpression(InvocationExpressionSyntax node)
+        {
+            if (node.Expression is MemberAccessExpressionSyntax member &&
+                member.Name.ToString() == "Get" &&
+                member.Expression.ToString() == "NexgenAMCaption")
+            {
+                var args = node.ArgumentList.Arguments;
+                if (args.Count >= 2)
+                {
+                    var firstArg = args[0].Expression as LiteralExpressionSyntax;
+                    var secondArg = args[1].Expression as LiteralExpressionSyntax;
+
+                    if (firstArg != null && firstArg.Token.ValueText == "Inspection" && secondArg != null)
+                    {
+                        string key = secondArg.Token.ValueText;
+                        if (_constants.ContainsKey(key))
+                        {
+                            string propName = MakePropertyName(key);
+                            var replacement = SyntaxFactory.ParseExpression($"FormConstants.{propName}");
+                            return replacement.WithTriviaFrom(node);
+                        }
+                    }
+                }
+            }
+
+            return base.VisitInvocationExpression(node);
+        }
     }
 }
