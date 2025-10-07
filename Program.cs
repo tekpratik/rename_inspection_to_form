@@ -2,60 +2,89 @@
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
+using OfficeOpenXml;
 
 class Program
 {
     static void Main()
     {
         string solutionPath = @"/Users/pratikbanawalkar/am-mobile";
-        string constantFilePath = Path.Combine(solutionPath, "FormConstants.cs");
+        string excelPath = Path.Combine(solutionPath, "InspectionUIDisplayReferences.xlsx");
+        string searchWord = "inspection";
 
-        string constantName = "M_ROUTE_FORM";
-        string constantValue = "MInspection";
-        string searchText = "(\"/api/mobile/MInspection";
-        string replaceText = "($\"/api/mobile/{FormConstants." + constantName + "}";
+        // EPPlus 8 license setup
+        ExcelPackage.License.SetNonCommercialPersonal("Pratik Banawalkar");
 
-        var files = Directory.GetFiles(solutionPath, "*.cs", SearchOption.AllDirectories)
-                             .Where(f => !f.EndsWith("FormConstants.cs"))
-                             .ToList();
+        // UI file types
+        var uiExtensions = new[]
+        {
+            ".axml", ".xml",        // Android XML layouts
+            ".storyboard", ".xib",  // iOS UI
+            ".xaml", ".razor",      // Shared .NET UI
+            ".cs"                   // For UI strings in code
+        };
 
-        int replaceCount = 0;
+        // Regex patterns to match UI-visible text
+        var uiRegexes = new[]
+        {
+            new Regex(@"android:text\s*=\s*""[^""]*inspection[^""]*""", RegexOptions.IgnoreCase),
+            new Regex(@"text\s*=\s*""[^""]*inspection[^""]*""", RegexOptions.IgnoreCase),
+            new Regex(@"title\s*=\s*""[^""]*inspection[^""]*""", RegexOptions.IgnoreCase),
+            new Regex(@"\bSetTitle\s*\(\s*""[^""]*inspection[^""]*""", RegexOptions.IgnoreCase),
+            new Regex(@"\bText\s*=\s*""[^""]*inspection[^""]*""", RegexOptions.IgnoreCase),
+            new Regex(@"\bTitle\s*=\s*""[^""]*inspection[^""]*""", RegexOptions.IgnoreCase),
+            new Regex(@"\bPlaceholder\s*=\s*""[^""]*inspection[^""]*""", RegexOptions.IgnoreCase)
+        };
+
+        var files = Directory.GetFiles(solutionPath, "*.*", SearchOption.AllDirectories)
+            .Where(f => uiExtensions.Any(ext => f.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        var results = new List<(string File, int Line, string Matched)>();
 
         foreach (var file in files)
         {
-            string code = File.ReadAllText(file);
-            if (!code.Contains(searchText)) continue;
-
-            var newCode = code.Replace(searchText, replaceText);
-
-            if (newCode != code)
+            try
             {
-                File.WriteAllText(file, newCode);
-                Console.WriteLine($"✅ Updated: {file}");
-                replaceCount++;
+                var lines = File.ReadAllLines(file);
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    string line = lines[i];
+                    if (uiRegexes.Any(r => r.IsMatch(line)))
+                    {
+                        results.Add((file, i + 1, line.Trim()));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️ Skipped {file}: {ex.Message}");
             }
         }
 
-        // --- Ensure FormConstants.cs exists ---
-        if (!File.Exists(constantFilePath))
+        // --- Export results to Excel ---
+        var excelFile = new FileInfo(excelPath);
+        using var package = new ExcelPackage(excelFile);
+        var ws = package.Workbook.Worksheets.Add("UIDisplay");
+
+        // Header
+        ws.Cells[1, 1].Value = "File";
+        ws.Cells[1, 2].Value = "Line";
+        ws.Cells[1, 3].Value = "Matched UI Line";
+
+        // Data
+        for (int i = 0; i < results.Count; i++)
         {
-            File.WriteAllText(constantFilePath, "public static class FormConstants\n{\n}\n");
+            ws.Cells[i + 2, 1].Value = results[i].File;
+            ws.Cells[i + 2, 2].Value = results[i].Line;
+            ws.Cells[i + 2, 3].Value = results[i].Matched;
         }
 
-        // --- Add constant if missing ---
-        string formConstantsCode = File.ReadAllText(constantFilePath);
-        if (!formConstantsCode.Contains($"const string {constantName}"))
-        {
-            int insertIndex = formConstantsCode.LastIndexOf('}');
-            if (insertIndex > 0)
-            {
-                string newConstLine = $"    public const string {constantName} = \"{constantValue}\";\n";
-                formConstantsCode = formConstantsCode.Insert(insertIndex, newConstLine);
-                File.WriteAllText(constantFilePath, formConstantsCode);
-                Console.WriteLine($"🆕 Added constant to FormConstants.cs: {constantName} = \"{constantValue}\"");
-            }
-        }
+        ws.Cells[ws.Dimension.Address].AutoFitColumns();
+        package.Save();
 
-        Console.WriteLine($"\n🎯 Replacement complete. Updated {replaceCount} files.");
+        Console.WriteLine($"✅ Found {results.Count} UI display strings containing '{searchWord}'.");
+        Console.WriteLine($"📄 Excel exported to: {excelPath}");
     }
 }
