@@ -93,3 +93,4 @@
 /Users/pratikbanawalkar/Projects/RenameInspectionToForm/RenameInspectionToForm/obj/Debug/net8.0/RenameInspectionToForm.pdb
 /Users/pratikbanawalkar/Projects/RenameInspectionToForm/RenameInspectionToForm/obj/Debug/net8.0/RenameInspectionToForm.genruntimeconfig.cache
 /Users/pratikbanawalkar/Projects/RenameInspectionToForm/RenameInspectionToForm/obj/Debug/net8.0/ref/RenameInspectionToForm.dll
+/Users/pratikbanawalkar/Projects/RenameInspectionToForm/RenameInspectionToForm/obj/Debug/net8.0/RenameInspectionToForm.sourcelink.json

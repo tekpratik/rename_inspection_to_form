@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("RenameInspectionToForm")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8a1a641b751a6ba1c98b4b9dfc79a887da4fe929")]
 [assembly: System.Reflection.AssemblyProductAttribute("RenameInspectionToForm")]
 [assembly: System.Reflection.AssemblyTitleAttribute("RenameInspectionToForm")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
