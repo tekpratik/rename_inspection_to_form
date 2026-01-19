@@ -95,7 +95,24 @@ class Program
             ws.Cells[row, 3].Value = info.LatestVersion;
             ws.Cells[row, 4].Value = info.ReleaseDate;
             ws.Cells[row, 5].Value = info.CompatibilityNote;
+
+            if (!info.SupportsNet10)
+            {
+                ws.Cells[row, 5].Style.Font.Color.SetColor(System.Drawing.Color.Red); 
+
+                var rowRange = ws.Cells[row, 1, row, ws.Dimension.End.Column];
+
+                rowRange.Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                rowRange.Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.Yellow);
+                rowRange.Style.Font.Bold = true; // optional
+            }
+
+
+            ws.Cells[row, 6].Hyperlink = new Uri(info.PackageUrl);
             ws.Cells[row, 6].Value = info.PackageUrl;
+            ws.Cells[row, 6].Style.Font.UnderLine = true;
+            ws.Cells[row, 6].Style.Font.Color.SetColor(System.Drawing.Color.Blue);
+
 
             row++;
         }
@@ -360,31 +377,64 @@ static async Task<NuGetInfo> GetNuGetInfo(string packageId, bool isAndroid, bool
     {
         var list = tfms.Select(t => t.ToLowerInvariant()).ToList();
 
+        bool Has(params string[] prefixes) =>
+            list.Any(t => prefixes.Any(p => t.StartsWith(p)));
+
         if (isAndroid)
         {
-            if (list.Any(t => t.StartsWith("net10.0-android")))
+            if (Has("net10.0-android", "net9.0-android", "net8.0-android"))
             {
-                note = "Supports net10.0-android";
+                note = "Explicit Android support";
                 return true;
             }
+
+            if (Has("net10.0", "net9.0", "net8.0", "netstandard2."))
+            {
+                note = "Implicit Android-compatible (.NET / netstandard)";
+                return true;
+            }
+
+            note = "No Android-compatible TFM";
+            return false;
         }
 
         if (isIos)
         {
-            if (list.Any(t => t.StartsWith("net10.0-ios")))
+            if (Has("net10.0-ios", "net9.0-ios", "net8.0-ios"))
             {
-                note = "Supports net10.0-ios";
+                note = "Explicit iOS support";
                 return true;
             }
+
+            if (Has("net10.0", "net9.0", "net8.0", "netstandard2."))
+            {
+                note = "Implicit iOS-compatible (.NET / netstandard)";
+                return true;
+            }
+
+            note = "No iOS-compatible TFM";
+            return false;
         }
 
-        if (list.Any(t => t.StartsWith("net10.0")))
+        if (Has("net10.0"))
         {
-            note = "Supports net10.0 (platform-agnostic)";
+            note = "Explicit .NET 10 support";
             return true;
         }
 
-        note = "No net10 support";
+        if (Has("net9.0", "net8.0", "net7.0"))
+        {
+            note = "Implicit forward-compatible (.NET 7–9)";
+            return true;
+        }
+
+        if (Has("netstandard2.0", "netstandard2.1"))
+        {
+            note = "Compatible via .NET Standard";
+            return true;
+        }
+
+        note = "No compatible TFM";
         return false;
     }
 
